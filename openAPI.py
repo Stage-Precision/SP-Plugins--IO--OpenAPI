@@ -38,37 +38,51 @@ class OpenAPIModule(sp.BaseModule):
 		return self.host.value + self.basePath.value + endpoint
 	
 	def request(self, method, endpoint, *args):
-		url = self.getUrl(endpoint)
-		print(f"Sending request: {method} {args}")
+		try:
+			url = self.getUrl(endpoint)
+			print(f"Sending request: {method} {args}")
 
-		spec = self.spec['paths'][endpoint][method]
-		bodyData = None
-		query = ""
-		headers = {'Content-Type': "application/json", 'Accept': "application/json"}
-		i = 0
-		for p in spec.get("parameters", []):
-			paramValue = args[i]
-			if p["in"] == "path":
-				url = url.replace("{"+p["name"]+"}", str(paramValue))
-			elif p["in"] == "body":
-				bodyData = json.loads(paramValue)
-			elif p["in"] == "query":
-				if query == "":
-					query = "?" + p["name"] + "=" + str(paramValue)
-				else:
-					query += "&" + p["name"] + "=" + str(paramValue)
-			elif p["in"] == "formData":
-				if bodyData == None:
-					bodyData = {}
-				bodyData[p["name"]] = paramValue
-			i += 1
-		url = url + query
-		if bodyData:
-			print(f"With Data {bodyData}")
-		print("To: " + url)
-		result = requests.request(method, url, json=bodyData, headers=headers)
-		print(f"Result: {result.status_code} {result.text}")
-		return {"result" : result.json(), "resultStatus" : result.status_code}
+			spec = self.spec['paths'][endpoint][method]
+			jsonData = None
+			formBodyData = None
+			query = ""
+			headers = {'Content-Type': "application/json", 'Accept': "application/json"}
+			i = 0
+			for p in spec.get("parameters", []):
+				paramValue = args[i]
+				if p["in"] == "path":
+					url = url.replace("{"+p["name"]+"}", str(paramValue))
+				elif p["in"] == "body":
+					try:
+						jsonData = json.loads(paramValue)
+					except Exception as e:
+						print(e)
+				elif p["in"] == "query":
+					if query == "":
+						query = "?"
+					else:
+						query += "&"
+					query += p["name"] + "=" + str(paramValue)
+				elif p["in"] == "formData":
+					headers = {'Content-Type': "application/x-www-form-urlencoded", 'Accept': "application/json"}
+					if formBodyData == None:
+						formBodyData = ""
+					else:
+						formBodyData += "&"
+					formBodyData += p["name"] + "=" + str(paramValue)
+				i += 1
+			url = url + query
+			if jsonData:
+				print(f"With Data {jsonData}")
+			if formBodyData:
+				print(f"With Form Data {formBodyData}")
+			print("To: " + url)
+			result = requests.request(method, url, json=jsonData, data=formBodyData, headers=headers)
+			print(f"Result: {result.status_code} {result.text}")
+			return {"result" : result.json(), "resultStatus" : result.status_code}
+		except Exception as e:
+			print(e)
+			return {"result" : "", "resultStatus" : -1}
 
 	def asyncRequest(self, method, spCallback, endpoint, *args):
 		future = self.threadPool.submit(self.request, method, endpoint, *args)
