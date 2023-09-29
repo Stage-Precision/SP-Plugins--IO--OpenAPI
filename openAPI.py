@@ -4,7 +4,7 @@ sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "depend
 
 import sp
 import json
-from swagger_parser import SwaggerParser
+import openapi_parser
 import requests
 import concurrent.futures
 
@@ -42,34 +42,36 @@ class OpenAPIModule(sp.BaseModule):
 			url = self.getUrl(endpoint)
 			print(f"Sending request: {method} {args}")
 
-			spec = self.spec['paths'][endpoint][method]
+			spec = self.specCache[endpoint][method]
 			jsonData = None
 			formBodyData = None
 			query = ""
 			headers = {'Content-Type': "application/json", 'Accept': "application/json"}
 			i = 0
-			for p in spec.get("parameters", []):
+			for p in spec.parameters:
+				paramName = p.name
 				paramValue = args[i]
-				if p["in"] == "path":
-					url = url.replace("{"+p["name"]+"}", str(paramValue))
-				elif p["in"] == "body":
+				paramLocation = p.location.value
+				if paramLocation == "path":
+					url = url.replace("{"+paramName+"}", str(paramValue))
+				elif paramLocation == "body":
 					try:
 						jsonData = json.loads(paramValue)
 					except Exception as e:
 						print(e)
-				elif p["in"] == "query":
+				elif paramLocation == "query":
 					if query == "":
 						query = "?"
 					else:
 						query += "&"
-					query += p["name"] + "=" + str(paramValue)
-				elif p["in"] == "formData":
+					query += paramName + "=" + str(paramValue)
+				elif paramLocation == "formData":
 					headers = {'Content-Type': "application/x-www-form-urlencoded", 'Accept': "application/json"}
 					if formBodyData == None:
 						formBodyData = ""
 					else:
 						formBodyData += "&"
-					formBodyData += p["name"] + "=" + str(paramValue)
+					formBodyData += paramName + "=" + str(paramValue)
 				i += 1
 			url = url + query
 			if jsonData:
@@ -104,43 +106,44 @@ class OpenAPIModule(sp.BaseModule):
 
 	def parseSwaggerFile(self, file):
 		print("Parsing " + file)
-		parser = SwaggerParser(swagger_path=file)
-		self.spec = parser.specification
+		self.spec = openapi_parser.parse(file)
+		self.specCache = {}
 
 		scheme = "http"
-		if len(self.spec.get("schemes", [])) > 0:
-			scheme = self.spec["schemes"][0]
-		if self.spec.get("host"):
-			self.host.value = scheme + "://" + self.spec["host"]
-		if self.spec.get("basePath"):
-			self.basePath.value = self.spec["basePath"]
+		#nothing like that in v3?
+		#if len(self.spec.get("schemes", [])) > 0:
+		#	scheme = self.spec["schemes"][0]
+		#if self.spec.get("host"):
+		#	self.host.value = scheme + "://" + self.spec["host"]
+		if len(self.spec.servers) > 0:
+			self.basePath.value = self.spec.servers[0].url
 
 		self.clearActions()
 
-		paths = self.spec['paths']
-		for p in paths:
-			methods = paths[p].keys()
-			print(f"{'|'.join(methods).upper()} {self.basePath.value}{p}")
-			for method in methods:
+		for p in self.spec.paths:
+			methods = [m.method.value for m in p.operations]
+			print(f"{'|'.join(methods).upper()} {self.basePath.value}{p.url}")
+			self.specCache[p.url] = {}
 
-				details = paths[p][method]
+			for details in p.operations:
+				self.specCache[p.url][details.method.value] = details
 				func = None
-				if method == "get":
+				if details.method.value == "get":
 					func = self.acGet
-				elif method == "post":
+				elif details.method.value == "post":
 					func = self.acPost
-				elif method == "put":
+				elif details.method.value == "put":
 					func = self.acPut
-				elif method == "delete":
+				elif details.method.value == "delete":
 					func = self.acDelete
 
 				if func:
-					action = self.addAsyncAction(method.upper() + " " + details["summary"], details["operationId"], func)
+					action = self.addAsyncAction(details.method.name + " " + details.summary, details.operation_id, func)
 					action.addScriptTokens(["result", "resultStatus"])
-					action.addStringParameter("endpoint", p)
-					for param in details.get("parameters", []):
-						parameterName = param["name"]
-						parameterType = param.get("type", "")
+					action.addStringParameter("endpoint", p.url)
+					for param in details.parameters:
+						parameterName = param.name
+						parameterType = param.schema.type.value
 						if parameterType in ["int", "integer", "int32", "int64", "byte"]:
 							action.addIntParameter(parameterName, 0)
 						elif parameterType in ["double", "float", "number"] :
