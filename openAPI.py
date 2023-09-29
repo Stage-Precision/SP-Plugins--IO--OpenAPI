@@ -3,8 +3,10 @@ import os
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "dependencies"))
 
 import sp
+import json
 from swagger_parser import SwaggerParser
 import requests
+import concurrent.futures
 
 class OpenAPIModule(sp.BaseModule):
 
@@ -18,6 +20,7 @@ class OpenAPIModule(sp.BaseModule):
 	}
 
 	def __init__(self):
+		self.threadPool = concurrent.futures.ThreadPoolExecutor(max_workers=8)
 		sp.BaseModule.__init__(self)
 		
 	def afterInit(self):
@@ -29,41 +32,63 @@ class OpenAPIModule(sp.BaseModule):
 		
 	def onParameterFeedback(self, parameter):
 		if parameter == self.swaggerFile or parameter == self.parse:
-			self.parseFile(self.swaggerFile.value)
+			self.parseSwaggerFile(self.swaggerFile.value)
 
 	def getUrl(self, endpoint):
 		return self.host.value + self.basePath.value + endpoint
 	
-	def acGet(self, endpoint, *args):
-		print(endpoint)
-		print(args)
+	def request(self, method, endpoint, *args):
 		url = self.getUrl(endpoint)
+		print(f"Sending request: {method} {args}")
 
-		spec = self.spec['paths'][endpoint]['get']
+		spec = self.spec['paths'][endpoint][method]
+		bodyData = None
+		query = ""
+		headers = {'Content-Type': "application/json", 'Accept': "application/json"}
 		i = 0
-		for p in spec["parameters"]:
+		for p in spec.get("parameters", []):
 			paramValue = args[i]
 			if p["in"] == "path":
 				url = url.replace("{"+p["name"]+"}", str(paramValue))
+			elif p["in"] == "body":
+				bodyData = json.loads(paramValue)
+			elif p["in"] == "query":
+				if query == "":
+					query = "?" + p["name"] + "=" + str(paramValue)
+				else:
+					query += "&" + p["name"] + "=" + str(paramValue)
+			elif p["in"] == "formData":
+				if bodyData == None:
+					bodyData = {}
+				bodyData[p["name"]] = paramValue
 			i += 1
-		print(url)
-		result = requests.get(url)
-		print(result.status_code, result.text)
+		url = url + query
+		if bodyData:
+			print(f"With Data {bodyData}")
+		print("To: " + url)
+		result = requests.request(method, url, json=bodyData, headers=headers)
+		print(f"Result: {result.status_code} {result.text}")
 		return {"result" : result.json(), "resultStatus" : result.status_code}
 
-	def acPost(self, endpoint, *args):
-		print(endpoint)
-		print(args)
+	def asyncRequest(self, method, spCallback, endpoint, *args):
+		future = self.threadPool.submit(self.request, method, endpoint, *args)
+		def callback(future):
+			spCallback(future.result())
+		future.add_done_callback(callback)
 
-	def acPut(self, endpoint, *args):
-		print(endpoint)
-		print(args)
+	def acGet(self, spCallback, endpoint, *args):
+		self.asyncRequest("get", spCallback, endpoint, *args)
 
-	def acDelete(self, endpoint, *args):
-		print(endpoint)
-		print(args)
+	def acPost(self, spCallback, endpoint, *args):
+		self.asyncRequest("post", spCallback, endpoint, *args)
 
-	def parseFile(self, file):
+	def acPut(self, spCallback, endpoint, *args):
+		self.asyncRequest("put", spCallback, endpoint, *args)
+
+	def acDelete(self, spCallback, endpoint, *args):
+		self.asyncRequest("delete", spCallback, endpoint, *args)
+
+	def parseSwaggerFile(self, file):
 		print("Parsing " + file)
 		parser = SwaggerParser(swagger_path=file)
 		self.spec = parser.specification
@@ -96,16 +121,22 @@ class OpenAPIModule(sp.BaseModule):
 					func = self.acDelete
 
 				if func:
-					action = self.addAction(method.upper() + " " + details["summary"], details["operationId"], func)
+					action = self.addAsyncAction(method.upper() + " " + details["summary"], details["operationId"], func)
 					action.addScriptTokens(["result", "resultStatus"])
 					action.addStringParameter("endpoint", p)
 					for param in details.get("parameters", []):
 						parameterName = param["name"]
-						parameterType = param.get("type")
-						if parameterType == "integer":
+						parameterType = param.get("type", "")
+						if parameterType in ["int", "integer", "int32", "int64", "byte"]:
 							action.addIntParameter(parameterName, 0)
+						elif parameterType in ["double", "float", "number"] :
+							action.addFloatParameter(parameterName, 0.0)
+						elif parameterType == "boolean":
+							action.addBoolParameter(parameterName, 0.0)
+						elif parameterType == "file":
+							action.addFileParameter(parameterName, "")
 						else:
-							action.addStringParameter(parameterName, str(parameterType))
+							action.addStringParameter(parameterName, "")
 
 
 if __name__ == "__main__":
