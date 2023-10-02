@@ -5,6 +5,7 @@ sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "depend
 import sp
 import json
 import openapi_parser
+from swagger_parser import SwaggerParser
 import requests
 import concurrent.futures
 
@@ -21,6 +22,7 @@ class OpenAPIModule(sp.BaseModule):
 
 	def __init__(self):
 		self.threadPool = concurrent.futures.ThreadPoolExecutor(max_workers=8)
+		self.v2 = True
 		sp.BaseModule.__init__(self)
 		
 	def afterInit(self):
@@ -32,26 +34,36 @@ class OpenAPIModule(sp.BaseModule):
 		
 	def onParameterFeedback(self, parameter):
 		if parameter == self.swaggerFile or parameter == self.parse:
-			self.parseSwaggerFile(self.swaggerFile.value)
+			self.parseFile(self.swaggerFile.value)
 
 	def getUrl(self, endpoint):
 		return self.host.value + self.basePath.value + endpoint
-	
+			
 	def request(self, method, endpoint, *args):
 		try:
 			url = self.getUrl(endpoint)
 			print(f"Sending request: {method} {args}")
 
-			spec = self.specCache[endpoint][method]
+			if self.v2:
+				spec = self.spec['paths'][endpoint][method]
+				parameters = spec.get("parameters", [])
+			else:
+				spec = self.specCache[endpoint][method]
+				parameters = spec.parameters
 			jsonData = None
 			formBodyData = None
 			query = ""
 			headers = {'Content-Type': "application/json", 'Accept': "application/json"}
 			i = 0
-			for p in spec.parameters:
-				paramName = p.name
+			for p in parameters:
 				paramValue = args[i]
-				paramLocation = p.location.value
+				if self.v2:
+					paramName = p["name"]
+					paramLocation = p["in"]
+				else:
+					paramName = p.name
+					paramLocation = p.location.value
+
 				if paramLocation == "path":
 					url = url.replace("{"+paramName+"}", str(paramValue))
 				elif paramLocation == "body":
@@ -104,12 +116,51 @@ class OpenAPIModule(sp.BaseModule):
 	def acDelete(self, spCallback, endpoint, *args):
 		self.asyncRequest("delete", spCallback, endpoint, *args)
 
-	def parseSwaggerFile(self, file):
-		print("Parsing " + file)
+	def parseSwaggerV2File(self, file):
+		print("Parsing v2 " + file)
+		parser = SwaggerParser(swagger_path=file)
+		self.spec = parser.specification
+
+		scheme = "http"
+		if len(self.spec.get("schemes", [])) > 0:
+			scheme = self.spec["schemes"][0]
+		if self.spec.get("host"):
+			self.host.value = scheme + "://" + self.spec["host"]
+		if self.spec.get("basePath"):
+			self.basePath.value = self.spec["basePath"]
+
+		self.clearActions()
+
+		paths = self.spec['paths']
+		for p in paths:
+			methods = paths[p].keys()
+			print(f"{'|'.join(methods).upper()} {self.basePath.value}{p}")
+			for method in methods:
+
+				details = paths[p][method]
+				func = None
+				if method == "get":
+					func = self.acGet
+				elif method == "post":
+					func = self.acPost
+				elif method == "put":
+					func = self.acPut
+				elif method == "delete":
+					func = self.acDelete
+
+				if func:
+					action = self.addAsyncAction(method.upper() + " " + details["summary"], details["operationId"], func)
+					action.addScriptTokens(["result", "resultStatus"])
+					action.addStringParameter("endpoint", p)
+					for param in details.get("parameters", []):
+						self.addActionParameter(action, param["name"], param.get("type", ""))
+
+	def parseOpenAPIV3File(self, file):
+		print("Parsing v3 " + file)
 		self.spec = openapi_parser.parse(file)
 		self.specCache = {}
 
-		scheme = "http"
+		#scheme = "http"
 		#nothing like that in v3?
 		#if len(self.spec.get("schemes", [])) > 0:
 		#	scheme = self.spec["schemes"][0]
@@ -142,19 +193,28 @@ class OpenAPIModule(sp.BaseModule):
 					action.addScriptTokens(["result", "resultStatus"])
 					action.addStringParameter("endpoint", p.url)
 					for param in details.parameters:
-						parameterName = param.name
-						parameterType = param.schema.type.value
-						if parameterType in ["int", "integer", "int32", "int64", "byte"]:
-							action.addIntParameter(parameterName, 0)
-						elif parameterType in ["double", "float", "number"] :
-							action.addFloatParameter(parameterName, 0.0)
-						elif parameterType == "boolean":
-							action.addBoolParameter(parameterName, 0.0)
-						elif parameterType == "file":
-							action.addFileParameter(parameterName, "")
-						else:
-							action.addStringParameter(parameterName, "")
+						self.addActionParameter(action, param.name, param.schema.type.value)
 
+	def addActionParameter(self, action, parameterName, parameterType):
+		if parameterType in ["int", "integer", "int32", "int64", "byte"]:
+			action.addIntParameter(parameterName, 0)
+		elif parameterType in ["double", "float", "number"] :
+			action.addFloatParameter(parameterName, 0.0)
+		elif parameterType == "boolean":
+			action.addBoolParameter(parameterName, 0.0)
+		elif parameterType == "file":
+			action.addFileParameter(parameterName, "")
+		else:
+			action.addStringParameter(parameterName, "")
+
+	def parseFile(self, file):
+		try:
+			self.parseOpenAPIV3File(file)
+			self.v2 = False
+		except:
+			print("might be no v3 file, trying v2")
+			self.parseSwaggerV2File(file)
+			self.v2 = True
 
 if __name__ == "__main__":
 	sp.registerPlugin(OpenAPIModule)
