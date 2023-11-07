@@ -149,7 +149,10 @@ class OpenAPIModule(sp.BaseModule):
 					func = self.acDelete
 
 				if func:
-					action = self.addAsyncAction(method.upper() + " " + details["summary"], details["operationId"], func)
+					operationId = details.get("operationId", None)
+					if not operationId:
+						operationId = details["summary"]
+					action = self.addAsyncAction(method.upper() + " " + details["summary"], operationId, func)
 					action.addScriptTokens(["result", "resultStatus"])
 					action.addStringParameter("endpoint", p)
 					for param in details.get("parameters", []):
