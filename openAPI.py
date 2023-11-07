@@ -160,7 +160,10 @@ class OpenAPIModule(sp.BaseModule):
 
 	def parseOpenAPIV3File(self, file):
 		print("Parsing v3 " + file)
-		self.spec = openapi_parser.parse(file)
+		try:
+			self.spec = openapi_parser.parse(file)
+		except:
+			return False
 		self.specCache = {}
 
 		#scheme = "http"
@@ -192,11 +195,15 @@ class OpenAPIModule(sp.BaseModule):
 					func = self.acDelete
 
 				if func:
-					action = self.addAsyncAction(details.method.name + " " + details.summary, details.operation_id, func)
+					operationId = details.operation_id
+					if not operationId:
+						operationId = details.summary
+					action = self.addAsyncAction(details.method.name + " " + details.summary, operationId, func)
 					action.addScriptTokens(["result", "resultStatus"])
 					action.addStringParameter("endpoint", p.url)
 					for param in details.parameters:
 						self.addActionParameter(action, param.name, param.schema.type.value)
+		return True
 
 	def addActionParameter(self, action, parameterName, parameterType):
 		if parameterType in ["int", "integer", "int32", "int64", "byte"]:
@@ -211,10 +218,9 @@ class OpenAPIModule(sp.BaseModule):
 			action.addStringParameter(parameterName, "")
 
 	def parseFile(self, file):
-		try:
-			self.parseOpenAPIV3File(file)
+		if self.parseOpenAPIV3File(file):
 			self.v2 = False
-		except:
+		else:
 			print("might be no v3 file, trying v2")
 			self.parseSwaggerV2File(file)
 			self.v2 = True
