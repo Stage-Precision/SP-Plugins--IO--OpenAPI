@@ -78,12 +78,15 @@ class OpenAPIModule(sp.BaseModule):
 						query += "&"
 					query += paramName + "=" + str(paramValue)
 				elif paramLocation == "formData":
-					headers = {'Content-Type': "application/x-www-form-urlencoded", 'Accept': "application/json"}
+					headers['Content-Type'] = "application/x-www-form-urlencoded"
+					headers['Accept'] = "application/json"
 					if formBodyData == None:
 						formBodyData = ""
 					else:
 						formBodyData += "&"
 					formBodyData += paramName + "=" + str(paramValue)
+				elif paramLocation == "header":
+					headers[paramName] = str(paramValue)
 				i += 1
 			url = url + query
 			if jsonData:
