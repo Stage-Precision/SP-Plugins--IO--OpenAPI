@@ -205,20 +205,20 @@ class OpenAPIModule(sp.BaseModule):
 					action.addScriptTokens(["result", "resultStatus"])
 					action.addStringParameter("endpoint", p.url)
 					for param in details.parameters:
-						self.addActionParameter(action, param.name, param.schema.type.value)
+						self.addActionParameter(action, param.name, param.schema.type.value, param.schema.example)
 		return True
 
-	def addActionParameter(self, action, parameterName, parameterType):
+	def addActionParameter(self, action, parameterName, parameterType, parameterValue = None):
 		if parameterType in ["int", "integer", "int32", "int64", "byte"]:
-			action.addIntParameter(parameterName, 0)
+			action.addIntParameter(parameterName, 0 if parameterValue is None else parameterValue)
 		elif parameterType in ["double", "float", "number"] :
-			action.addFloatParameter(parameterName, 0.0)
+			action.addFloatParameter(parameterName, 0.0 if parameterValue is None else parameterValue)
 		elif parameterType == "boolean":
-			action.addBoolParameter(parameterName, 0.0)
+			action.addBoolParameter(parameterName, False if parameterValue is None else parameterValue)
 		elif parameterType == "file":
-			action.addFileParameter(parameterName, "")
+			action.addFileParameter(parameterName, "" if parameterValue is None else parameterValue)
 		else:
-			action.addStringParameter(parameterName, "")
+			action.addStringParameter(parameterName, "" if parameterValue is None else parameterValue)
 
 	def parseFile(self, file):
 		if self.parseOpenAPIV3File(file):
