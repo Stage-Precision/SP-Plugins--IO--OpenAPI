@@ -50,7 +50,18 @@ class OpenAPIModule(sp.BaseModule):
 
 			if self.v2:
 				spec = self.spec['paths'][endpoint][method]
-				parameters = spec.get("parameters", [])
+				parameters = []
+				for param in spec.get("parameters", []):
+					if param.get("in", "") == "body":
+						ref = param.get("schema", {}).get("$ref", "")
+						definitionRef = SwaggerParser.get_definition_name_from_ref(ref)
+						definition = self.spec.get("definitions", {}).get(definitionRef, {})
+						if definition.get("type", "") == "object":
+							for paramName in definition.get("properties", {}):
+								parameters.append({"name" : paramName, "in" : "_objectData"})
+					else:
+						parameters.append(param)
+
 			else:
 				spec = self.specCache[endpoint][method]
 				parameters = list(spec.parameters) #duplicate parameters so we can add some more from objects
@@ -82,7 +93,7 @@ class OpenAPIModule(sp.BaseModule):
 					if jsonData is None:
 						jsonData = dict()
 					jsonData[paramName] = paramValue
-				elif paramLocation == "body":
+				elif paramLocation == "body": #only used as fallback if no ref object was found, so this can be filled with a json string
 					try:
 						jsonData = json.loads(paramValue)
 					except Exception as e:
@@ -175,7 +186,19 @@ class OpenAPIModule(sp.BaseModule):
 					action.addScriptTokens(["result", "resultStatus"])
 					action.addStringParameter("endpoint", p)
 					for param in details.get("parameters", []):
-						self.addActionParameter(action, param["name"], param.get("type", ""))
+						if param.get("in", "") == "body":
+							ref = param.get("schema", {}).get("$ref", "")
+							if ref != "":
+								definitionRef = SwaggerParser.get_definition_name_from_ref(ref)
+								definition = self.spec.get("definitions", {}).get(definitionRef, {})
+								if definition.get("type", "") == "object":
+									for paramName, par in definition.get("properties", {}).items():
+										self.addActionParameter(action, paramName, par.get("type", ""))
+							else:
+								print(f"No ref found in {operationId} {param}")
+								self.addActionParameter(action, param["name"], param.get("type", ""))
+						else:
+							self.addActionParameter(action, param["name"], param.get("type", ""))
 
 	def parseOpenAPIV3File(self, file):
 		print("Parsing v3 " + file)
