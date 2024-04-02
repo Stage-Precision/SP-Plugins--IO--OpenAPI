@@ -11,6 +11,7 @@ import openapi_parser
 from swagger_parser import SwaggerParser
 import requests
 import concurrent.futures
+import types
 
 class OpenAPIModule(sp.BaseModule):
 
@@ -52,7 +53,15 @@ class OpenAPIModule(sp.BaseModule):
 				parameters = spec.get("parameters", [])
 			else:
 				spec = self.specCache[endpoint][method]
-				parameters = spec.parameters
+				parameters = list(spec.parameters) #duplicate parameters so we can add some more from objects
+				if spec.request_body:
+					for content in spec.request_body.content:
+						if content.type.value == "application/json" and content.schema.type.value == 'object':
+							for prop in content.schema.properties:
+								prop.location = types.SimpleNamespace()
+								prop.location.value = "_objectData"
+								parameters.append(prop)
+
 			jsonData = None
 			formBodyData = None
 			query = ""
@@ -69,6 +78,10 @@ class OpenAPIModule(sp.BaseModule):
 
 				if paramLocation == "path":
 					url = url.replace("{"+paramName+"}", str(paramValue))
+				elif paramLocation == "_objectData":
+					if jsonData is None:
+						jsonData = dict()
+					jsonData[paramName] = paramValue
 				elif paramLocation == "body":
 					try:
 						jsonData = json.loads(paramValue)
@@ -171,6 +184,7 @@ class OpenAPIModule(sp.BaseModule):
 		except:
 			return False
 		self.specCache = {}
+		self.addedActionParams = {}
 
 		#scheme = "http"
 		#nothing like that in v3?
@@ -207,8 +221,20 @@ class OpenAPIModule(sp.BaseModule):
 					action = self.addAction(details.method.name + " " + details.summary, operationId, func)
 					action.addScriptTokens(["result", "resultStatus"])
 					action.addStringParameter("endpoint", p.url)
+					self.addedActionParams[action] = []
 					for param in details.parameters:
+						self.addedActionParams[action].append(param.name)
 						self.addActionParameter(action, param.name, param.schema.type.value, param.schema.example)
+					if details.request_body:
+						for content in details.request_body.content:
+							if content.type.value == "application/json" and content.schema.type.value == 'object':
+								for param in content.schema.properties:
+									paramName = param.name
+									while paramName in self.addedActionParams[action]:
+										paramName = paramName + "_"
+									self.addedActionParams[action].append(paramName)
+									self.addActionParameter(action, paramName, param.schema.type.value, param.schema.example)
+
 		return True
 
 	def addActionParameter(self, action, parameterName, parameterType, parameterValue = None):
