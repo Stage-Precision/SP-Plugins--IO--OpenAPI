@@ -1,5 +1,8 @@
 import sys
 import os
+
+#pip install swagger-parser
+#pip install openapi3-parser
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "dependencies"))
 
 import sp
@@ -155,7 +158,7 @@ class OpenAPIModule(sp.BaseModule):
 					operationId = details.get("operationId", None)
 					if not operationId:
 						operationId = details["summary"]
-					action = self.addAsyncAction(method.upper() + " " + details["summary"], operationId, func)
+					action = self.addAction(method.upper() + " " + details["summary"], operationId, func)
 					action.addScriptTokens(["result", "resultStatus"])
 					action.addStringParameter("endpoint", p)
 					for param in details.get("parameters", []):
@@ -201,7 +204,7 @@ class OpenAPIModule(sp.BaseModule):
 					operationId = details.operation_id
 					if not operationId:
 						operationId = details.summary
-					action = self.addAsyncAction(details.method.name + " " + details.summary, operationId, func)
+					action = self.addAction(details.method.name + " " + details.summary, operationId, func)
 					action.addScriptTokens(["result", "resultStatus"])
 					action.addStringParameter("endpoint", p.url)
 					for param in details.parameters:
